@@ -18,8 +18,6 @@ import (
 	"golang.org/x/tools/go/loader"
 )
 
-var fset = token.NewFileSet()
-
 func main() {
 	flag.Parse()
 
@@ -29,7 +27,6 @@ func main() {
 	}
 
 	var conf loader.Config
-	conf.Fset = fset
 	for _, importPath := range importPaths {
 		conf.Import(importPath)
 	}
@@ -40,17 +37,23 @@ func main() {
 
 	for _, pkg := range prog.InitialPackages() {
 		for _, file := range pkg.Files {
-			ast.Inspect(file, func(node ast.Node) bool {
-				if s, ok := node.(*ast.StructType); ok {
-					malign(node.Pos(), pkg.Types[s].Type.(*types.Struct))
-				}
-				return true
+			malignFile(file, prog.Fset, pkg, func(pos token.Position, sz, opt int64) {
+				fmt.Printf("%s: struct of size %d could be %d\n", pos, sz, opt)
 			})
 		}
 	}
 }
 
-func malign(pos token.Pos, str *types.Struct) {
+func malignFile(file *ast.File, fset *token.FileSet, pkg *loader.PackageInfo, report func(pos token.Position, size, optimal int64)) {
+	ast.Inspect(file, func(node ast.Node) bool {
+		if s, ok := node.(*ast.StructType); ok {
+			malign(node.Pos(), fset, pkg.Types[s].Type.(*types.Struct), report)
+		}
+		return true
+	})
+}
+
+func malign(pos token.Pos, fset *token.FileSet, str *types.Struct, report func(pos token.Position, size, optimal int64)) {
 	wordSize := int64(8)
 	maxAlign := int64(8)
 	switch build.Default.GOARCH {
@@ -63,7 +66,7 @@ func malign(pos token.Pos, str *types.Struct) {
 	s := gcSizes{wordSize, maxAlign}
 	sz, opt := s.Sizeof(str), optimalSize(str, &s)
 	if sz != opt {
-		fmt.Printf("%s: struct of size %d could be %d\n", fset.Position(pos), sz, opt)
+		report(fset.Position(pos), sz, opt)
 	}
 }
 
